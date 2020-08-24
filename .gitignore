@@ -41,3 +41,6 @@ output/
 
 
 *.swp
+
+# google drive token
+.google-drive-credentials.json

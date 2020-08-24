@@ -1,13 +1,15 @@
 #!/usr/bin/env ./node_modules/.bin/babel-node
-import '../server/env';
+import '../../server/env';
 
 import fs from 'fs';
+import readline from 'readline';
 
 import Promise from 'bluebird';
+import { google } from 'googleapis'; // eslint-disable-line node/no-unpublished-import
 import { parse as json2csv } from 'json2csv';
 import moment from 'moment';
 
-import models, { sequelize } from '../server/models';
+import models, { sequelize } from '../../server/models';
 
 const GoogleDrivePath = process.env.OC_GOOGLE_DRIVE || `${process.env.HOME}/Google\ Drive/Open\ Collective`;
 
@@ -109,7 +111,7 @@ if (month < 10) {
   month = `0${month}`;
 }
 
-const path = `${GoogleDrivePath}/Open Data/${startDate.getFullYear()}-${month}`;
+const path = `${GoogleDrivePath}/${startDate.getFullYear()}-${month}`;
 try {
   console.log('>>> mkdir', path);
   fs.mkdirSync(path);
@@ -143,7 +145,6 @@ async function run() {
       });
       return row;
     });
-
     try {
       const csv = json2csv(data);
       fs.writeFileSync(`${path}/${query.filename}`, csv);
@@ -151,8 +152,133 @@ async function run() {
       console.log(err);
     }
   });
-  console.log('done');
-  process.exit(0);
+  console.log('all files created');
 }
 
-run();
+const driveCredentials = {
+  clientId: process.env.DRIVE_CLIENT_ID,
+  clientSecret: process.env.DRIVE_CLIENT_SECRET,
+  redirectUri: process.env.DRIVE_REDIRECT_URI,
+  refresh_token: process.env.DRIVE_REFRESH_TOKEN, // eslint-disable-line camelcase
+};
+
+// If modifying these scopes, delete .google-drive-credentials.json.
+const SCOPES = ['https://www.googleapis.com/auth/drive'];
+// The file .google-drive-credentials.json stores the user's access and refresh tokens, and is
+// created automatically when the authorization flow completes for the first
+// time.
+const TOKEN_PATH = '.google-drive-credentials.json';
+
+/**
+ * Create an OAuth2 client with the given credentials, and then execute the
+ * given callback function.
+ * @param {Object} credentials The authorization client credentials.
+ * @param {function} callback The callback to call with the authorized client.
+ */
+const authorize = (driveCredentials, callback) => {
+  const { clientSecret, clientId, redirectUri, refresh_token } = driveCredentials; // eslint-disable-line camelcase
+  const oAuth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+
+  // Check if we have previously stored a token.
+  // eslint-disable-next-line camelcase
+  if (refresh_token) {
+    oAuth2Client.setCredentials(driveCredentials);
+    callback(oAuth2Client);
+  } else {
+    return getAccessToken(oAuth2Client, callback);
+  }
+};
+
+/**
+ * Get and store new token after prompting for user authorization, and then
+ * execute the given callback with the authorized OAuth2 client.
+ * @param {google.auth.OAuth2} oAuth2Client The OAuth2 client to get token for.
+ * @param {getEventsCallback} callback The callback for the authorized client.
+ */
+const getAccessToken = (oAuth2Client, callback) => {
+  const authUrl = oAuth2Client.generateAuthUrl({
+    access_type: 'offline', // eslint-disable-line camelcase
+    scope: SCOPES,
+  });
+  console.log('Authorize this app by visiting this url:', authUrl);
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  rl.question('Enter the code from that page here: ', code => {
+    rl.close();
+    oAuth2Client.getToken(code, (err, token) => {
+      if (err) return console.error('Error retrieving access token', err);
+      oAuth2Client.setCredentials(token);
+      // Store the token to disk for later program executions
+      fs.writeFile(TOKEN_PATH, JSON.stringify(token), err => {
+        if (err) return console.error(err);
+        console.log('Token stored to', TOKEN_PATH);
+      });
+      callback(oAuth2Client);
+    });
+  });
+};
+
+/**
+ * upload file to google drive
+ * @param {google.auth.OAuth2} auth An authorized OAuth2 client.
+ */
+const uploadFiles = async auth => {
+  const drive = google.drive({ version: 'v3', auth });
+
+  //create a folder on drive
+  const folderMetadata = {
+    name: `${startDate.getFullYear()}-${month}`,
+    mimeType: 'application/vnd.google-apps.folder',
+    parents: ['1OwRpuIehFQxRnJIRAksQ1Jd2xXZrhz5L'],
+  };
+  const folder = await drive.files.create({
+    resource: folderMetadata,
+    fields: 'id',
+  });
+
+  await Promise.map(queries, async query => {
+    const fileMetadata = {
+      name: `${query.filename}`,
+      parents: [`${folder.data.id}`],
+    };
+    const media = {
+      mimeType: 'file/csv',
+      body: fs.createReadStream(`${path}/${query.filename}`),
+    };
+
+    const res = await drive.files.create({
+      resource: fileMetadata,
+      media: media,
+      fields: 'id',
+    });
+    console.log(`File: ${query.filename},\t Id: ${res.data.id}`);
+  });
+  console.log(`>>> all files uploaded to "${folderMetadata['name']}" folder in google drive`);
+
+  //delete all the files after succesful upload
+  try {
+    fs.rmdirSync(`${path}`, { recursive: true });
+    console.log(`${path} is deleted!`);
+  } catch (err) {
+    console.error(`Error while deleting ${path}.`);
+    console.error(err);
+  }
+  process.exit(0);
+};
+
+run()
+  .then(() => {
+    // If drive credentails are available try to upload generated files to drive
+    if (driveCredentials.clientId && driveCredentials.clientSecret && driveCredentials.redirectUri) {
+      // Authorize with credentials, then call the Google Drive API.
+      authorize(driveCredentials, uploadFiles);
+    } else {
+      process.exit(0);
+    }
+  })
+  .catch(e => {
+    console.error(e);
+    process.exit(1);
+  });
