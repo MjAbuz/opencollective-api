@@ -150,38 +150,39 @@ async function emailReport(orders, data, attachments) {
 }
 
 /** Return the options passed by the user to run the script */
+/* eslint-disable camelcase */
 export function parseCommandLineArguments() {
   const parser = new ArgumentParser({
-    addHelp: true,
+    add_help: true,
     description: 'Charge due subscriptions',
   });
-  parser.addArgument(['-q', '--quiet'], {
+  parser.add_argument('-q', '--quiet', {
     help: 'Silence output',
-    defaultValue: false,
-    action: 'storeConst',
+    default: false,
+    action: 'store_const',
     constant: true,
   });
-  parser.addArgument(['--dryrun'], {
+  parser.add_argument('--dryrun', {
     help: "Don't perform any changes to the database",
-    defaultValue: false,
-    action: 'storeConst',
+    default: false,
+    action: 'store_const',
     constant: true,
   });
-  parser.addArgument(['-l', '--limit'], {
+  parser.add_argument('-l', '--limit', {
     help: 'total subscriptions to process',
-    defaultValue: 500,
+    default: 500,
   });
-  parser.addArgument(['-c', '--concurrency'], {
+  parser.add_argument('-c', '--concurrency', {
     help: 'concurrency',
-    defaultValue: 3,
+    default: 3,
   });
-  parser.addArgument(['-s', '--simulate'], {
+  parser.add_argument('-s', '--simulate', {
     help: 'concurrency',
-    defaultValue: false,
-    action: 'storeConst',
+    default: false,
+    action: 'store_const',
     constant: true,
   });
-  const args = parser.parseArgs();
+  const args = parser.pars_args();
   return {
     dryRun: args.dryrun,
     verbose: !args.quiet,
@@ -190,6 +191,7 @@ export function parseCommandLineArguments() {
     simulate: args.simulate,
   };
 }
+/* eslint-enable camelcase */
 
 /** Kick off the script with all the user selected options */
 export async function entryPoint(options) {
